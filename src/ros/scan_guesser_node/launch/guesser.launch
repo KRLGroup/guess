@@ -1,0 +1,7 @@
+<launch>
+  <arg name="cmd_vel_topic" default="/cmd_vel" />
+  
+  <node name="guesser" pkg="scan_guesser_node" type="guesser">
+    <param name="cmd_vel_topic" value="$(arg cmd_vel_topic)"/>
+  </node>
+</launch>

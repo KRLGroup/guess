@@ -1,0 +1,139 @@
+#! /usr/bin/env python
+# coding: utf-8
+
+import numpy as np
+from threading import Thread, Lock
+
+import rospy
+import tf
+import time
+from geometry_msgs.msg import Twist, Vector3
+from sensor_msgs.msg import LaserScan
+import scan_guesser_node.guesser_utils as sgu
+from scan_guesser_node.guesser_utils import Provider, Receiver
+
+class ScanGuesserNode:
+    def __init__(self):
+        cmd_vel_topic = rospy.get_param('~cmd_vel_topic', '/cmd_vel')
+        scan_topic = rospy.get_param('~scan_topic', '/scan')
+        sg_scan_topic = rospy.get_param('~sg_scan_topic', '/sg_scan')
+        sv_scan_topic = rospy.get_param('~sv_scan_topic', '/sv_scan')
+        self.base_tf = rospy.get_param('~base_tf', 'base_laser_link')
+        self.gtf_name = rospy.get_param('~gtf_name', 'gen_tf')
+        self.scan_sz = int(rospy.get_param('~scan_sz', '512'))
+        self.scan_batch_sz = int(rospy.get_param('~scan_batch_sz', '8'))
+        self.skt_pkg_scaling = 1000
+        self.br = tf.TransformBroadcaster()
+
+        self.sg_scan_pub = rospy.Publisher(sg_scan_topic, LaserScan, queue_size=10)
+        self.sv_scan_pub = rospy.Publisher(sv_scan_topic, LaserScan, queue_size=10)
+        self.scan_sub = rospy.Subscriber(scan_topic, LaserScan, self.scanCb)
+        self.cmd_vel_sub = rospy.Subscriber(cmd_vel_topic, Twist, self.cmdVelCb)
+
+        self.mtx = Lock()
+        self.irange = 0
+        cmd_vel_sz = 7  # 6D velocity + timestamp in seconds
+        self.cmd_vel = np.zeros((cmd_vel_sz - 1,), dtype=np.float32)
+        self.buffer_idx = 0
+        self.data_buffer = np.zeros((self.scan_batch_sz, cmd_vel_sz + self.scan_sz))
+        self.provider = Provider(self.scan_batch_sz*(cmd_vel_sz + self.scan_sz), dport=9559)
+        self.receiver = Receiver(self.scan_sz*2 + 3, dport=9558)
+        self.set_init_time = False
+        self.init_time = rospy.Time.now().to_sec()
+        self.tf_listener = tf.TransformListener()
+
+
+    def __reshapeData(self, data):
+        if not self.set_init_time:
+            self.set_init_time = True
+            self.init_time = rospy.Time.now().to_sec()
+
+        self.mtx.acquire()
+        self.data_buffer[self.buffer_idx, self.scan_sz:-1] = self.cmd_vel
+        self.data_buffer[self.buffer_idx, -1] = rospy.Time.now().to_sec() - self.init_time
+        self.mtx.release()
+        buff_section = self.scan_batch_sz - self.buffer_idx - 1
+        self.irange = int(0.5*(len(data) - self.scan_sz))
+
+        self.data_buffer[self.buffer_idx,
+                         :self.scan_sz] = data[self.irange:self.irange + self.scan_sz]
+        cmdv_batch = np.zeros((self.scan_batch_sz, self.cmd_vel.shape[0] + 1))
+        cmdv_batch[buff_section:] = self.data_buffer[:self.buffer_idx + 1, self.scan_sz:]
+        cmdv_batch[:buff_section] = self.data_buffer[self.buffer_idx + 1:, self.scan_sz:]
+        scan_batch = np.zeros((self.scan_batch_sz, self.scan_sz))
+        scan_batch[buff_section:] = self.data_buffer[:self.buffer_idx + 1, :self.scan_sz]
+        scan_batch[:buff_section] = self.data_buffer[self.buffer_idx + 1:, :self.scan_sz]
+        self.buffer_idx = self.buffer_idx + 1
+
+        sreshaped = scan_batch.reshape((scan_batch.shape[0]*scan_batch.shape[1],))
+        sreshaped = (sreshaped*self.skt_pkg_scaling).astype(np.int16)
+        creshaped = cmdv_batch.reshape((cmdv_batch.shape[0]*cmdv_batch.shape[1],))
+        creshaped = (creshaped*self.skt_pkg_scaling).astype(np.int16)
+        reshaped = np.concatenate((sreshaped, creshaped))
+        return reshaped
+
+    def cmdVelCb(self, data):
+        self.mtx.acquire()
+        self.cmd_vel = np.array([data.linear.x,
+                                 data.linear.y, data.linear.z,
+                                 data.angular.x, data.angular.y, data.angular.z])
+        # print "rm:: cmd_vel", self.cmd_vel[0], self.cmd_vel[5]
+        self.mtx.release()
+
+    def scanCb(self, data):
+        if self.buffer_idx == self.scan_batch_sz:
+            self.buffer_idx = 0
+        else:
+            pkg = self.__reshapeData(data.ranges)
+            try: self.provider.send(pkg)
+            except Exception as e:
+                # print "Connection problem... " + str(e)
+                return
+
+            sg_data = self.receiver.getData() * (1./self.skt_pkg_scaling)
+            sg_tf = sg_data[-3:]
+            # sg_tf[2] = 0.0  ## todo remove
+            # print "rm:: transform", sg_tf
+            sg_data = sg_data[:-3].reshape((2, self.scan_sz))
+
+            self.br.sendTransform((sg_tf[0], sg_tf[1], 0),
+                             tf.transformations.quaternion_from_euler(0, 0, sg_tf[2]),
+                             rospy.Time.now(), self.gtf_name, self.base_tf)
+
+            sv_scan_msg = data
+            sg_scan_msg = data
+
+            hfov_angle = 2.199424
+            sv_scan_msg.angle_min = -hfov_angle
+            sv_scan_msg.angle_max = hfov_angle
+            sv_scan_msg.ranges = list(sg_data[1])
+            sv_scan_msg.intensities = []
+            self.sv_scan_pub.publish(sv_scan_msg)
+
+            sg_scan_msg.angle_min = -hfov_angle
+            sg_scan_msg.angle_max = hfov_angle
+            sg_scan_msg.ranges = list(sg_data[0])
+            sg_scan_msg.intensities = []
+            sg_scan_msg.header.frame_id = self.gtf_name
+            self.sg_scan_pub.publish(sg_scan_msg)
+
+
+    def run(self):
+        handshake_port = 9550
+        sgu.println("-- Waiting modules handshake on localhost:" + str(handshake_port))
+        sr = Receiver(1, dport=handshake_port)
+        ack = sr.getData().astype(np.int32)[0]
+
+        if ack == 1:
+            rospy.sleep(2.0)
+            sgu.println("-- Spinning ROS node")
+            rospy.spin()
+
+
+if __name__ == '__main__':
+    sgu.println('-- Starting Scan guesser ROS middle-ware')
+    rospy.init_node('guesser')
+    try:
+        sgn = ScanGuesserNode()
+        sgn.run()
+    except rospy.ROSInterruptException: pass

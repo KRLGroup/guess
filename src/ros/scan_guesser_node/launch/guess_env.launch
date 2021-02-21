@@ -1,0 +1,7 @@
+<launch>
+  <include file="$(find turtlebot_stage)/launch/turtlebot_in_stage.launch">
+           <!-- arg name="TURTLEBOT_STAGE_MAP_FILE" value="$(find turtlebot_stage)/maps/maze.yaml" /-->
+           <!-- arg name="TURTLEBOT_STAGE_WORLD_FILE" value="$(find turtlebot_stage)/maps/maze.world" /-->
+  </include>
+  <include file="$(find turtlebot_teleop)/launch/logitech.launch" />
+</launch>

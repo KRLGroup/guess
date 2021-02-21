@@ -1,0 +1,72 @@
+define block model
+(
+  size [0.5 0.5 0.5]
+  gui_nose 0
+)
+
+define topurg ranger
+(
+	sensor( 			
+    range [ 0.0  5.0 ]
+    fov 270.25
+   samples 550
+  )
+
+  # generic model properties
+  color "black"
+  size [ 0.050 0.050 0.100 ]
+)
+
+define erratic position
+(
+  #size [0.415 0.392 0.25]
+  size [0.200 0.200 0.250] # [0.35 0.35 0.25]
+  origin [-0.050 0.000 0.000 0.000]
+  gui_nose 1
+  drive "diff"
+  topurg(pose [ 0.050 0.000 0.000 0.000 ])
+)
+
+define floorplan model
+(
+  # sombre, sensible, artistic
+  color "gray30"
+
+  # most maps will need a bounding box
+  boundary 1
+
+  gui_nose 0
+  gui_grid 0
+
+  gui_outline 0
+  gripper_return 0
+  fiducial_return 0
+  laser_return 1
+)
+
+# set the resolution of the underlying raytrace model in meters
+resolution 0.02
+
+interval_sim 100  # simulation timestep in milliseconds
+
+window
+( 
+  size [ 844 797 ] 
+
+  rotate [ 0.500 -0.060 ]
+  scale 14.782 
+)
+
+# load an environment bitmap
+floorplan
+( 
+  name "simple-corridor"
+  bitmap "simple_corridor.png"
+  size [ 50.500 53.500 0.500 ]
+  pose [ 12.800 14.500 0.000 0.000 ]
+)
+
+# throw in a robot
+erratic( pose [ 5.5 1.75 0.000 0.0 ] name "era" color "blue")
+# block( pose [ -13.924 25.020 0 180.000 ] color "red")
+
