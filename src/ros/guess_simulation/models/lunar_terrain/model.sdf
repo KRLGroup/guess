@@ -1,0 +1,50 @@
+<?xml version='1.0' encoding='ASCII'?>
+<sdf version="1.4">
+  <model name="lunar_terrain">
+    <static>true</static>
+    <link name="ground">
+      <!-- <collision name="surface">
+        <geometry>
+          <heightmap>
+            <uri>model://lunar_terrain/materials/textures/250m.tif</uri>
+            <size>250 250 13.79</size>
+            <pos>0 0 1169.71</pos>
+          </heightmap>
+        </geometry>
+      </collision>
+      <visual name="surface">
+        <geometry>
+          <heightmap>
+            <texture>
+              <diffuse>model://lunar_terrain/materials/textures/diffuse1.jpg</diffuse>
+              <normal>model://lunar_terrain/materials/textures/normal1.jpg</normal>
+              <size>1</size>
+            </texture>
+            <uri>model://lunar_terrain/materials/textures/250m.tif</uri>
+            <size>250 250 13.79</size>
+            <pos>0 0 1169.71</pos>
+          </heightmap>
+        </geometry>
+      </visual> -->
+      <collision name="terrain">
+        <pose>0 0 0.0 0 0 0</pose>
+        <geometry>
+          <mesh>
+            <scale>1.0 1.0 1.0</scale>
+            <uri>model://lunar_terrain/materials/textures/terrain.obj</uri>
+          </mesh>
+        </geometry>
+      </collision>
+      <visual name="terrain">
+        <pose>0 0 0.0 0 0 0</pose>
+        <geometry>
+          <mesh>
+            <scale>1.0 1.0 1.0</scale>
+            <uri>model://lunar_terrain/materials/textures/terrain.obj</uri>
+          </mesh>
+        </geometry>
+      </visual>
+    </link>
+  </model>
+</sdf>
+

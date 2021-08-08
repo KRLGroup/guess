@@ -1,0 +1,32 @@
+<?xml version='1.0' encoding='ASCII'?>
+<sdf version="1.4">
+    <world name="Lunar World">
+        <physics name='default_physics' default='0' type="ode">
+            <ode>
+                <solver>
+                    <type>quick</type>
+                    <iters>50</iters>
+                    <thread_position_correction>1</thread_position_correction>
+                    <island_threads>0</island_threads>
+                </solver>
+            </ode>
+            <max_step_size>0.005</max_step_size>
+            <real_time_factor>1</real_time_factor>
+            <real_time_update_rate>500</real_time_update_rate>
+        </physics>
+        <scene>
+            <background>0 0 0 1.0</background>
+            <shadows>false</shadows>
+        </scene>
+        <gravity>0.0 0 -1.62</gravity>
+        <include>
+            <uri>model://lunar_terrain</uri>
+        </include>
+        <include>
+            <uri>model://ground_plane</uri>
+        </include>
+        <include>
+            <uri>model://sun</uri>
+        </include>
+    </world>
+</sdf>

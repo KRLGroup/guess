@@ -1,0 +1,27 @@
+<?xml version="1.0" ?>
+<sdf version="1.4">
+  <world name="default">
+    <physics name='default_physics' default='0' type="ode">
+      <ode>
+        <solver>
+          <type>world</type>
+        </solver>
+      </ode>
+      <max_step_size>0.005</max_step_size>
+      <real_time_factor>1</real_time_factor>
+      <real_time_update_rate>200</real_time_update_rate>    
+    </physics>
+    
+    <gravity>0.0 0.0 -9.81</gravity>
+
+    <include>
+      <uri>model://ground_plane</uri>
+    </include>
+    <include>
+      <uri>model://sun</uri>
+    </include>
+    <include>
+      <uri>model://diag_floor_b1</uri>
+    </include>
+  </world>
+</sdf>
