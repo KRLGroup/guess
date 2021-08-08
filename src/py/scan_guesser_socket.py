@@ -89,7 +89,7 @@ if __name__ == "__main__":
     cwd = os.path.dirname(os.path.abspath(__file__))
     dtn = datetime.datetime.now()
     dt = str(dtn.month) + "-" + str(dtn.day) + "_" + str(dtn.hour) + "-" + str(dtn.minute)
-    save_path_dir = '/home/sapienzbot/ws/guess/dataset/metrics/'
+    save_path_dir = '/home/shrijitsingh99/guess/dataset/metrics/'
 
     save_path_dir = os.path.join(save_path_dir, test_id + "_" + dt)
     dataset_file = os.path.join(os.path.join(cwd, "../../dataset/"), "diag_underground.txt")

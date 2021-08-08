@@ -7,3 +7,5 @@ src/py/__pycache__/
 build/
 *~
 *npy
+
+*.pyc

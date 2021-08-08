@@ -10,6 +10,12 @@ import matplotlib.pyplot as plt
 
 from threading import Thread, Lock
 
+
+import tensorflow as tf
+tf.compat.v1.disable_eager_execution()
+session = tf.compat.v1.Session()
+tf.compat.v1.keras.backend.set_session(session)
+
 from utils import LaserScans, MetricsSaver, ElapsedTimer, TfPredictor
 from autoencoder_lib import AutoEncoder
 from gan_lib import GAN
@@ -120,7 +126,9 @@ class ScanGuesser:
             cmd_vel = cmd_vel[:n_rows].reshape((-1, n_factor, cmd_vel.shape[-1]))
             ts = ts[:n_rows].reshape((-1, n_factor, 1))
 
-            self._train(scans, next_scans, cmd_vel, ts, verbose=False)
+            with session.as_default():
+                with session.graph.as_default():
+                    self._train(scans, next_scans, cmd_vel, ts, verbose=False)
 
         if self.start_update_thr:
             print("-- Init update thread... ", end='')
@@ -145,7 +153,9 @@ class ScanGuesser:
                 self.update_mtx.acquire()
                 self.updating_model = True
                 self.update_mtx.release()
-                self._train(scans, next_scans, cmdv, ts, verbose=False)
+                with session.as_default():
+                    with session.graph.as_default():
+                        self._train(scans, next_scans, cmdv, ts, verbose=False)
                 self.update_mtx.acquire()
                 self.updating_model = False
                 self.update_mtx.release()
@@ -310,30 +320,33 @@ class ScanGuesser:
         assert self.correlated_steps <= scans.shape[0], 'Not enough sample to generate scan latent.'
         verbose = self.verbose if verbose is None else verbose
 
-        if verbose:
-            timer = ElapsedTimer()
 
-        encodings = self.encode_scan(scans)
-        decoded_scan = self.decode_scan(encodings, clip_max=clip_max,
-                                        interpolate=self.interpolate_scans_pts)
+        with session.as_default():
+            with session.graph.as_default():
+                if verbose:
+                    timer = ElapsedTimer()
 
-        latent = np.concatenate([encodings, cmd_vel], axis=-1)
-        latent = latent.reshape((-1, self.correlated_steps, self.generator_input_shape[1]))
-        generated_latent = self.gan.generate(latent)
-        generated_scan = self.decode_scan(generated_latent, clip_max=clip_max, interpolate=False)[0]
+                encodings = self.encode_scan(scans)
+                decoded_scan = self.decode_scan(encodings, clip_max=clip_max,
+                                                interpolate=self.interpolate_scans_pts)
 
-        correlated_cmdv = np.expand_dims(cmd_vel, axis=0)
-        correlated_ts = 0.33*np.ones_like(correlated_cmdv[..., :1])
-        correlated_cmd = np.concatenate([correlated_cmdv, correlated_ts], axis=-1)
-        generated_tf_params = self.projector.predict(correlated_cmd)[0]
+                latent = np.concatenate([encodings, cmd_vel], axis=-1)
+                latent = latent.reshape((-1, self.correlated_steps, self.generator_input_shape[1]))
+                generated_latent = self.gan.generate(latent)
+                generated_scan = self.decode_scan(generated_latent, clip_max=clip_max, interpolate=False)[0]
 
-        generated_tf_params[..., :2] *= self.projector_max_dist
-        generated_tf_params[..., 2] *= np.pi
+                correlated_cmdv = np.expand_dims(cmd_vel, axis=0)
+                correlated_ts = 0.33*np.ones_like(correlated_cmdv[..., :1])
+                correlated_cmd = np.concatenate([correlated_cmdv, correlated_ts], axis=-1)
+                generated_tf_params = self.projector.predict(correlated_cmd)[0]
 
-        if verbose:
-            print("-- Prediction in", timer.msecs())
+                generated_tf_params[..., :2] *= self.projector_max_dist
+                generated_tf_params[..., 2] *= np.pi
 
-        return generated_scan, decoded_scan, generated_tf_params
+                if verbose:
+                    print("-- Prediction in", timer.msecs())
+
+            return generated_scan, decoded_scan, generated_tf_params
 
     def generate_raw_scan(self, raw_scans, cmd_vel, ts):
         assert self.correlated_steps <= raw_scans.shape[0], 'Not enough sample to generate scan latent.'
@@ -390,6 +403,10 @@ class ScanGuesser:
         self.sim_step += self.correlated_steps
         return self.add_scans(scans, cmd_vel, ts)
 
+def get_prediction_input_slice(scan_to_predict_idx):
+    return slice(scan_to_predict_idx - (generation_step + correlated_steps),
+                                   scan_to_predict_idx - generation_step)
+
 if __name__ == "__main__":
     print("ScanGuesser test-main")
     scan_n = 10000
@@ -404,7 +421,7 @@ if __name__ == "__main__":
 
     ae_lr = 1e-4
     ae_batch_sz = 32
-    ae_latent_dim = 32
+    ae_latent_dim = 128
 
     gan_discriminator_lr = 1e-4
     gan_generator_lr = 1e-4
@@ -420,10 +437,10 @@ if __name__ == "__main__":
     save_path_dir = os.path.join(save_path_dir, test_id + "_" + dt) if save_experiment else ''
 
     # diag_first_floor.txt ; diag_underground.txt ; diag_labrococo.txt
-    dataset_file = os.path.join(os.path.join(cwd, "../../dataset/"), "diag_first_floor.txt")
+    dataset_file = os.path.join(os.path.join(cwd, "../../dataset/"), "output_data.txt")
 
     guesser = ScanGuesser(net_model="afmk",  # conv; lstm
-                          scan_dim=512, scan_res=0.00653590704, scan_fov=(3/2)*np.pi,
+                          scan_dim=512, scan_res=0.0085635698992, scan_fov=(3/2)*np.pi,
                           correlated_steps=correlated_steps, generation_step=generation_step,
                           projector_max_dist=generation_step*0.3*0.5,
                           minibuffer_batches_num=minibuffer_batches_num,
@@ -464,7 +481,11 @@ if __name__ == "__main__":
     while not guesser.simulate_step():
         continue
 
-    nsteps = 500
+    prediction_indexes = np.linspace(0, 4000, num=200, dtype=np.int32).tolist()
+    print(prediction_indexes)
+    print("#######################################################\n\n\n\n\n\n\n")
+
+    nsteps = 200
     for i in range(nsteps):
         if guesser.simulate_step():
             if i % int(0.45*nsteps) == 0 and False:
@@ -476,21 +497,26 @@ if __name__ == "__main__":
                                     (gscan, '#1f77b4', 'generated')], title='it %d' % i,
                                    save_fig=save_pattern if len(save_pattern) == 0 else save_pattern % i)
 
-    _, target_tf = guesser.compute_transform(cmdv_to_predict)
-    gscan, dscan, tfp_params = guesser.generate_scan(scans[prediction_input_slice],
-                                                     cmdv[prediction_input_slice], ts[prediction_input_slice], clip_max=False)
 
-    # print("target_tf", target_tf)
-    # print("gen_tf", tfp_params)
+    for prediction_index in prediction_indexes:
+        prediction_input_slice = get_prediction_input_slice(prediction_index)
 
-    guesser.plot_scans([(scan_to_predict, '#e41a1c', 'scan'),
-                        (dscan[-1], '#ff7f0e', 'decoded'),
-                        (gscan, '#1f77b4', 'generated')], title='it %d' % nsteps,
-                       save_fig=save_pattern if len(save_pattern) == 0 else save_pattern % nsteps)
+        _, target_tf = guesser.compute_transform(cmdv_to_predict)
+        gscan, dscan, tfp_params = guesser.generate_scan(scans[prediction_input_slice],
+                                                        cmdv[prediction_input_slice], ts[prediction_input_slice], clip_max=False)
 
-    save_pattern = '' if len(save_path_dir) == 0 else os.path.join(save_path_dir, 'tf%d.pdf')
-    guesser.plot_projections(scan_to_predict, params=[target_tf, tfp_params],
-                             param_names=['projected', 'predicted'],
-                             save_fig=save_pattern if len(save_pattern) == 0 else save_pattern % i)
+        # print("target_tf", target_tf)
+        # print("gen_tf", tfp_params)
+
+        scan_to_predict = scans[prediction_index]
+        guesser.plot_scans([(scan_to_predict, '#e41a1c', 'scan'),
+                            (dscan[-1], '#ff7f0e', 'decoded'),
+                            (gscan, '#1f77b4', 'generated')], title='it %d' % prediction_index,
+                        save_fig=save_pattern if len(save_pattern) == 0 else save_pattern % prediction_index)
+
+        # save_pattern = '' if len(save_path_dir) == 0 else os.path.join(save_path_dir, 'tf%d.pdf')
+        # guesser.plot_projections(scan_to_predict, params=[target_tf, tfp_params],
+        #                         param_names=['projected', 'predicted'],
+        #                         save_fig=save_pattern if len(save_pattern) == 0 else save_pattern % prediction_index)
 
     # plt.show()

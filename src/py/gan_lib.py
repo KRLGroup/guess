@@ -3,12 +3,15 @@
 
 import sys
 import os
+
+from tensorflow.python.keras.layers.convolutional import Conv1DTranspose
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 import time
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt
+import datetime
 
 from keras.layers import Dense, Embedding, Activation, Flatten, Reshape, Input, concatenate, multiply
 from keras.layers import Conv1D, Conv2DTranspose, UpSampling1D, UpSampling2D, LSTM
@@ -16,11 +19,11 @@ from keras.layers import LeakyReLU, Dropout, Lambda
 from keras.layers import BatchNormalization, Dense
 from keras.models import Model, Sequential
 from keras.losses import mse, binary_crossentropy
-from keras.optimizers import Adam, RMSprop, SGD
+from keras.optimizers import Adam, RMSprop, SGD, Adagrad
 from keras.utils import plot_model
 from keras import backend as K
 
-from utils import LaserScans
+from utils import LaserScans, Landmarks
 from autoencoder_lib import AutoEncoder
 
 class GAN:
@@ -42,11 +45,13 @@ class GAN:
         self.discriminator_input_shape = discriminator_input_shape
         self.generator_input_shape = generator_input_shape
 
+
         if not multiply_noise:
             assert self.noise_dim % self.generator_input_shape[0] == 0, \
                 'Number of noise dimension must be a multiplier of %d' % self.generator_input_shape[0]
 
         # Build and compile the discriminator
+        # optimizer = Adagrad(learning_rate=discriminator_lr)
         optimizer = Adam(lr=discriminator_lr, beta_1=0.5, decay=3e-8)
         self.discriminator = self.build_multiply_noise_discriminator() if multiply_noise else self.build_discriminator()
         self.discriminator.compile(loss=['binary_crossentropy'], optimizer=optimizer, metrics=['accuracy'])
@@ -66,7 +71,7 @@ class GAN:
         # and the label of that data
         valid = self.discriminator([x, label])
 
-        optimizer = Adam(lr=generator_lr, beta_1=0.5, decay=3e-8)
+        optimizer = Adam(lr=discriminator_lr, beta_1=0.5, decay=3e-8)
         self.adversarial = Model([noise, label], valid)
         self.adversarial.compile(loss=['binary_crossentropy'], optimizer=optimizer)
 
@@ -93,12 +98,15 @@ class GAN:
         return Model([x, label], validity)
 
     def build_discriminator(self):
-        depth = 16
+        depth = 128
         discriminator_input_shape = (self.discriminator_input_shape[0]
                                      + np.prod(self.generator_input_shape),)
 
         model = Sequential()
         model.add(Dense(depth, input_shape=discriminator_input_shape))
+        model.add(LeakyReLU(alpha=0.2))
+        model.add(Dropout(0.4))
+        model.add(Dense(int(depth/2)))
         model.add(LeakyReLU(alpha=0.2))
         model.add(Dense(1, activation='sigmoid'))
 
@@ -147,20 +155,26 @@ class GAN:
         return Model([noise_input, label_input], x)
 
     def build_generator(self):
-        depth = 64
+        depth = 128
         model = Sequential()
         noise_dim = int(self.noise_dim/self.generator_input_shape[0])
         generator_input_shape = (self.generator_input_shape[0], self.generator_input_shape[1] + noise_dim,)
 
         if self.model_id == 'conv':
-            model.add(Conv1D(int(depth/2), 4, padding='same', input_shape=generator_input_shape))
+            model.add(Conv1DTranspose(int(depth/4), 1, padding='same', input_shape=generator_input_shape))
+            model.add(LeakyReLU(alpha=0.2))
+            model.add(Conv1DTranspose(int(depth/2), 1, padding='same'))
+            model.add(LeakyReLU(alpha=0.2))
+            model.add(Conv1DTranspose(int(depth/1), 1, padding='same'))
             model.add(LeakyReLU(alpha=0.2))
             model.add(Flatten())
-            model.add(Dense(int(depth)))
+            model.add(Dense(int(2*depth)))
         else:
             model.add(Flatten(input_shape=generator_input_shape))
             model.add(Dense(int(depth)))
 
+        model.add(LeakyReLU(alpha=0.2))
+        model.add(Dense(int(depth)))
         model.add(LeakyReLU(alpha=0.2))
         model.add(BatchNormalization(momentum=0.8))
         model.add(Dense(np.prod(self.discriminator_input_shape), activation='tanh'))
@@ -232,8 +246,8 @@ class GAN:
 
             metrics.append([d_loss, d_acc, a_loss])
             if verbose:
-                log_msg = "-- %d/%d: [D loss: %f, acc: %f] - [A loss: %f]" % (t + 1, train_steps,
-                                                                              d_loss, d_acc, a_loss)
+                log_msg = "-- %d/%d: [D loss: %f, acc: %f] - [D loss_real: %f, real: %f, D d_loss_fake: %f, fake: %f] - [A loss: %f]" % (t + 1, train_steps,
+                                                                              d_loss, d_acc, *d_loss_real, *d_loss_fake, a_loss)
                 print(log_msg)
                 sys.stdout.write("\033[F\033[K")
 
@@ -243,88 +257,94 @@ class GAN:
         return np.array(metrics)
 
     def generate(self, x):
-        noise = (np.random.rand(1, self.noise_dim)*self.noise_magnitude) - 0.5*self.noise_magnitude
+        # noise = (np.random.rand(1, self.noise_dim)*self.noise_magnitude) - 0.5*self.noise_magnitude
+        noise = np.random.normal(0, 1, (1, self.noise_dim))
         sample = self.generator.predict([noise, np.expand_dims(x, axis=0) if len(x.shape) == 2 else x])
         return sample[0] if len(x.shape) == 2 else sample
 
-
 if __name__ == "__main__":
-    # params
-    scan_n = 10000
-    dataset_name = 'diag_first_floor.txt'
+    landmarks_n = 20000 # Number of samples to use from dataset
+    dataset_name = 'landmarks.txt'
+    # Indices of samples to plot
     plot_indices = {
-        'diag_first_floor.txt': [1000, 1500],
-        'diag_underground.txt': [1000, 6500],
-        'diag_labrococo.txt': [800],
+        'landmarks.txt': [i for i in range(0, landmarks_n, 1000)],
     }
-    scan_to_predict_idx = plot_indices[dataset_name][0]
+    landmark_to_predict_idx = plot_indices[dataset_name][0]
 
-    scan_beam_num = 512
-    latent_dim = 32
-    correlated_sequence_step = 8
-    prediction_step = 8
+    # Training Parameters
+    params = {
+        "latent_dim": 32, # Size of latent vector
+        "correlated_sequence_step": 8, # Number of Correlated Samples
+        "prediction_step": 32, # nth Sample After Current Sample to Predict 
 
-    ae_batch_sz = 256
-    ae_epochs = 100
+        "ae_batch_sz": 256, 
+        "ae_epochs": 2500,
+        "ae_lr": 0.001,
 
-    gan_noise_dim = 1
-    gan_batch_sz = 32
-    gan_train_steps = 500
-    gan_predict_encodings = False
+        "gan_noise_dim": 16,
+        "gan_batch_sz": 256,
+        "gan_train_steps": 1000,
+        "gan_predict_encodings": True,
+        "discriminator_lr": 1e-3,
+        "generator_lr": 1e-4,
+        "smoothing_factor": 0.2
+    }
+
+    landmarks_in_sample_num = 20
+    latent_dim = params["latent_dim"]
+    correlated_sequence_step = params["correlated_sequence_step"]
+    prediction_step = params["prediction_step"]
+
+    ae_batch_sz = params["ae_batch_sz"]
+    ae_epochs = params["ae_epochs"]
+    ae_lr = params["ae_lr"]
+
+    gan_noise_dim = params["gan_noise_dim"]
+    gan_batch_sz = params["gan_batch_sz"]
+    gan_train_steps = params["gan_train_steps"]
+    gan_predict_encodings = params["gan_predict_encodings"]
+    discriminator_lr = params["discriminator_lr"]
+    generator_lr = params["generator_lr"]
+    smoothing_factor = params["smoothing_factor"]
 
     cwd = os.path.dirname(os.path.abspath(__file__))
     dataset_file = os.path.join(os.path.join(cwd, "../../dataset/"), dataset_name)
 
-    # ---- laser-scans
-    ls = LaserScans(verbose=True)
-    ls.load(dataset_file, scan_res=0.00653590704, scan_fov=(3/2)*np.pi, scan_beam_num=scan_beam_num,
-            clip_scans_at=8, scan_offset=8)
-    scans = ls.get_scans()[:scan_n]
-    cmdv = ls.get_cmd_vel()[:scan_n, ::5]
-    cmdv_dim = cmdv.shape[-1]
+    # Load Landmark Dataset
+    ls = Landmarks(verbose=True)
+    ls.load(dataset_file)
+    landmarks = ls.landmarks[:landmarks_n]
+    robot_pos = ls.pos[:landmarks_n]
+    robot_pos_dim = robot_pos.shape[-1]
 
-    correlated_steps = slice((scan_to_predict_idx - (prediction_step + correlated_sequence_step)),
-                             (scan_to_predict_idx - prediction_step), None)
-    scan_to_predict = scans[scan_to_predict_idx]
-    correlated_scan_sequence = scans[correlated_steps]
-    correlated_cmdv_sequence = cmdv[correlated_steps]
-
-    rnd_indices = np.arange(scans.shape[0])
+    rnd_indices = np.arange(landmarks.shape[0])
     np.random.shuffle(rnd_indices)
 
-    # ---- autoencoder
-    ae = AutoEncoder(ls.scans_dim(), variational=True, convolutional=False,
+    # Create AutoEncoder & Train
+    ae = AutoEncoder(ls.landmarks_dim(), variational=True, convolutional=False,
                      batch_size=ae_batch_sz, latent_dim=latent_dim, verbose=False)
-    ae.build_model(lr=0.01)
+    ae.build_model(lr=ae_lr)
     print('-- Fitting VAE model done.')
 
-    ae.train(scans[rnd_indices], epochs=ae_epochs)
-    encoded_scans = ae.encode(scans)
-    decoded_scans = ae.decode(encoded_scans)
+    ae.train(landmarks[rnd_indices], epochs=ae_epochs)
+    encoded_landmarks = ae.encode(landmarks)
+    decoded_landmarks = ae.decode(encoded_landmarks)
 
-    rnd_idx = int(np.random.rand() * scan_n)
-    # ls.plot_scans(scans[rnd_idx], decoded_scans[rnd_idx])
-    # ls.plot_scans(scan_to_predict, decoded_scans[scan_to_predict_idx])
-    # plt.show()
-
-    correlated_latent = np.concatenate((ae.encode(correlated_scan_sequence),
-                                        correlated_cmdv_sequence), axis=-1)
-
-    # ---- gan - generating latent spaces
+    # Create GAN & Train
     gan = GAN(verbose=True)
-    gan.build_model(discriminator_input_shape=(latent_dim if gan_predict_encodings else scan_beam_num,),
-                    generator_input_shape=(correlated_sequence_step, latent_dim + cmdv_dim,),
-                    discriminator_lr=1e-2, generator_lr=1e-4, smoothing_factor=0.,
-                    noise_dim=gan_noise_dim, noise_magnitude=1., model_id="conv")
-
-    latent = np.concatenate([encoded_scans, cmdv], axis=-1)
-    gan_x = latent.reshape((-1, correlated_sequence_step, latent_dim + cmdv_dim))
+    gan.build_model(discriminator_input_shape=(latent_dim if gan_predict_encodings else landmarks_in_sample_num,),
+                    generator_input_shape=(correlated_sequence_step, latent_dim + robot_pos_dim,),
+                    discriminator_lr=discriminator_lr, generator_lr=generator_lr, smoothing_factor=0.1,
+                    noise_dim=gan_noise_dim, noise_magnitude=1., model_id="afjk")
 
     if gan_predict_encodings:
-        gan_y = encoded_scans[(correlated_sequence_step + prediction_step)::correlated_sequence_step]
+        latent = np.concatenate([encoded_landmarks, robot_pos], axis=-1)
+        gan_x = latent.reshape((-1, correlated_sequence_step, latent_dim + robot_pos_dim))
+        gan_y = encoded_landmarks[(correlated_sequence_step + prediction_step)::correlated_sequence_step]
     else:
-        gan_y = scans[(correlated_sequence_step + prediction_step)::correlated_sequence_step]
-    # [plt.plot(gan_y[int(np.random.rand() * gan_y.shape[0])]) for _ in range(10)]
+        latent = np.concatenate([landmarks, robot_pos], axis=-1)
+        gan_x = latent.reshape((-1, correlated_sequence_step, landmarks_in_sample_num + robot_pos_dim))
+        gan_y = landmarks[(correlated_sequence_step + prediction_step)::correlated_sequence_step]
 
     dataset_dim = min(gan_x.shape[0], gan_y.shape[0])
     gan_x = gan_x[:dataset_dim]
@@ -335,66 +355,72 @@ if __name__ == "__main__":
     metrics = gan.train(gan_x[rnd_indices], gan_y[rnd_indices], train_steps=gan_train_steps,
                         batch_sz=gan_batch_sz, verbose=True)
 
-    if gan_predict_encodings:
-        gen_out = gan.generate(correlated_latent)
-        gen_scan = ae.decode(gen_out.reshape((1, latent_dim)))[0]
-    else:
-        gen_out = gan.generate(correlated_latent)
-        gen_scan = gen_out
 
+    # Save Training Results & Parameters
+    save_experiment = True
+    cwd = os.path.dirname(os.path.abspath(__file__))
+    dtn = datetime.datetime.now()
+    dt = str(dtn.month) + "-" + str(dtn.day) + "_" + str(dtn.hour) + "-" + str(dtn.minute)
+    save_path_dir = os.path.join(cwd, "../../dataset/metrics/")
+    save_path_dir = os.path.join(save_path_dir, "GAN" + "_" + dt) if save_experiment else ''
+    os.mkdir(save_path_dir)
+    save_pattern = '' if len(save_path_dir) == 0 else os.path.join(save_path_dir, '%d_sample')
+
+    # Plot Loss
     plt.title('Metrics')
     color_dict = {
         "red" : np.array([251, 180, 174])/255.0,
         "blue" : np.array([179, 205, 227])/255.0,
     }
     markers = ['^', 'o', 's', '*', '+']
-
     plt.plot(metrics[:, 0], label='Discriminator', lw=1.2, color=0.9*color_dict['red'],
              marker=markers[0], markersize=7, markevery=50)
     plt.plot(metrics[:, 2], label='Generator', lw=1.2, color=0.9*color_dict['blue'],
              marker=markers[3], markersize=7, markevery=50)
     plt.grid(color=np.array([210, 210, 210])/255.0, linestyle='--', linewidth=1)
     plt.legend()
+    plt.savefig(os.path.join(save_path_dir, 'loss.pdf'), format='pdf')
 
-    np.save('/home/sapienzbot/Desktop/rss_guess_res/generation-loss.npy', np.concatenate([metrics[:, 0], metrics[:, 2]], axis=-1))
+    # Write parameters used for training to disk
+    import json
+    with open(os.path.join(save_path_dir, 'params.json'), 'w') as file:
+        file.write(json.dumps(params)) 
 
-    plt.figure()
-    plt.title('Latent %d' % scan_to_predict_idx)
-    plt.plot(gen_out, label='generated')
-    plt.plot(encoded_scans[scan_to_predict_idx] if gan_predict_encodings else scans[scan_to_predict_idx], label='target')
-    plt.legend()
+    # Plot Results
+    for landmark_to_predict_idx in plot_indices[dataset_name]:
+        # Generate predictions for specified indices
+        correlated_steps = slice((landmark_to_predict_idx - (prediction_step + correlated_sequence_step)),
+                                (landmark_to_predict_idx - prediction_step), None)
+        scan_to_predict = landmarks[landmark_to_predict_idx]
+        correlated_scan_sequence = encoded_landmarks[correlated_steps]
+        correlated_robot_pos_sequence = robot_pos[correlated_steps]
 
-    [ls.plot_scans([(scans[i], '#e41a1c', 'scan'),
-                    (decoded_scans[i], '#ff7f0e', 'decoded'),
-                    (gen_scan, '#1f77b4', 'generated')], title='scans')
-     for i in plot_indices[dataset_name]]
+        correlated_latent = np.concatenate((correlated_scan_sequence,
+                                            correlated_robot_pos_sequence), axis=-1)
 
-    plt.show()
+        if gan_predict_encodings:
+            gen_out = gan.generate(correlated_latent)
+            gen_scan = ae.decode(gen_out.reshape((1, latent_dim)))[0]
+        else:
+            gen_out = gan.generate(correlated_latent)
+            gen_scan = gen_out
 
 
-    # ---- gan - generating scans
+        # Plot Predicted and Target Latent Vector
+        plt.figure()
+        plt.title('Latent %d' % landmark_to_predict_idx)
+        plt.plot(gen_out, label='generated')
+        plt.plot(encoded_landmarks[landmark_to_predict_idx] if gan_predict_encodings else scans[landmark_to_predict_idx], label='target')
+        plt.legend()
+        plt.savefig(((save_pattern + '-latent.pdf') % landmark_to_predict_idx), format='pdf')
 
-    # gan = GAN(verbose=True)
-    # gan.build_model(discriminator_input_shape=(ls.scans_dim(),),
-    #                generator_input_shape=(correlated_sequence_step, latent_dim + cmdv_dim),
-    #                smoothing_factor=0.03, noise_dim=1, model_id="afmk")
 
-    # latent = np.concatenate([encoded_scans, cmdv], axis=-1)
-    # gan_x = latent.reshape((-1, correlated_sequence_step, latent_dim + cmdv_dim))
-    # gan_y = scans[(correlated_sequence_step + prediction_step)::correlated_sequence_step]
-    # dataset_dim = min(gan_x.shape[0], gan_y.shape[0])
-    # gan_x = gan_x[:dataset_dim]
-    # gan_y = 2*gan_y[:dataset_dim] - 1.0
+        # Plot ground truth, decoded and generated landmarks
+        ls.plot([(landmarks[landmark_to_predict_idx], '#e41a1c', 'ground truth'),
+                (decoded_landmarks[landmark_to_predict_idx], '#ff7f0e', 'decoded'),
+                (gen_scan, '#1f77b4', 'generated')], title='scans', fig_path=save_pattern if len(save_pattern) == 0 else ((save_pattern + '-orig.pdf') % landmark_to_predict_idx))
 
-    # rnd_indices = np.arange(dataset_dim)
-    # np.random.shuffle(rnd_indices)
-    # gan.train(gan_x[rnd_indices], gan_y[rnd_indices], train_steps=20, batch_sz=gan_batch_sz, verbose=True)
 
-    # # for i in range(1, 8):
-    # #     ls.plot_scans(correlated_scan_sequence[0], correlated_scan_sequence[i])
-    # #     plt.show()
-
-    # ls.plot_scans(correlated_scan_sequence[0], scan_to_predict)
-    # ls.plot_scans(0.5*(gan.generate(correlated_latent) + 1.0), scan_to_predict)
-
-    # del gan
+    # Merge all the pdfs plots together using pdftk
+    os.chdir(save_path_dir)
+    os.system("pdftk `ls | grep '/\|pdf$'` cat output merged.pdf")

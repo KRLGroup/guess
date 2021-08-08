@@ -7,6 +7,9 @@ import time
 
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.patches import Circle, Patch
+from matplotlib.collections import PatchCollection
+from matplotlib import cm
 
 from keras import backend as K
 from keras.layers import Dense, Embedding, Activation, Flatten, Reshape
@@ -18,7 +21,6 @@ from keras.losses import mse, binary_crossentropy
 from keras.models import Model, Sequential, clone_model
 from keras.optimizers import Adam, RMSprop, SGD
 from keras.utils import plot_model
-
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
@@ -32,7 +34,8 @@ class MetricsSaver:
         metric_result = metric_result.reshape((1, metric_result.shape[-1]))
 
         if metric_name in self.met_dict.keys():
-            self.met_dict[metric_name] = np.vstack([self.met_dict[metric_name], metric_result])
+            self.met_dict[metric_name] = np.vstack(
+                [self.met_dict[metric_name], metric_result])
         else:
             self.met_dict[metric_name] = metric_result
 
@@ -44,10 +47,13 @@ class MetricsSaver:
 class ElapsedTimer:
     def __init__(self):
         self.start_time = time.time()
+
     def __elapsed(self, sec):
         return round(sec, 2)
+
     def msecs(self):
-        return self.__elapsed((time.time() - self.start_time)*1000)
+        return self.__elapsed((time.time() - self.start_time) * 1000)
+
     def secs(self):
         return self.__elapsed(time.time() - self.start_time)
 
@@ -59,12 +65,17 @@ class LaserScans:
         self.cmd_vel = None
         self.scans = None
         self.scan_bound = 0
-        self.scan_fov = (3/2)*np.pi  # [270 deg]
-        self.scan_res = 0.001389*np.pi # [0.25 deg]
+        self.scan_fov = (3 / 2) * np.pi  # [270 deg]
+        self.scan_res = 0.001389 * np.pi  # [0.25 deg]
         self.scan_offset = 0
 
-    def load(self, datafile, scan_res, scan_fov,
-             scan_beam_num=None, clip_scans_at=None, scan_offset=0):
+    def load(self,
+             datafile,
+             scan_res,
+             scan_fov,
+             scan_beam_num=None,
+             clip_scans_at=None,
+             scan_offset=0):
         self.data = np.loadtxt(datafile).astype('float32')
         self.scan_res = scan_res
         self.scan_fov = scan_fov
@@ -78,32 +89,42 @@ class LaserScans:
         if self.verbose:
             print("-- [LasersScans] timesteps:", self.ts.shape)
             print("-- [LasersScans] cmd_vel:", self.cmd_vel.shape)
-            print("-- [LasersScans] scans:", self.scans.shape,
-                  "range [", np.min(self.scans), "-", np.max(self.scans), "]")
+            print("-- [LasersScans] scans:", self.scans.shape, "range [",
+                  np.min(self.scans), "-", np.max(self.scans), "]")
 
         irange = 0
-        beam_num = int(self.scan_fov/self.scan_res)
+        beam_num = int(self.scan_fov / self.scan_res)
         assert beam_num == self.scans.shape[1], \
             "Wrong number of scan beams " + str(beam_num) + " != " + str(self.scans.shape[1])
         if not self.scan_beam_num is None:
             if self.scan_beam_num + self.scan_offset < beam_num:
-                irange = int(0.5*(beam_num - self.scan_beam_num)) + self.scan_offset
+                irange = int(
+                    0.5 * (beam_num - self.scan_beam_num)) + self.scan_offset
             elif self.scan_beam_num < beam_num:
-                irange = int(0.5*(beam_num - self.scan_beam_num))
-            self.scan_bound = (irange*self.scan_res)
+                irange = int(0.5 * (beam_num - self.scan_beam_num))
+            self.scan_bound = (irange * self.scan_res)
         else:
             self.scan_bound = 0
             self.scan_beam_num = beam_num
         self.scans = self.scans[:, irange:irange + self.scan_beam_num]
         if self.verbose:
-            r_msg = "[" + str(irange) + "-" + str(irange + self.scan_beam_num) + "]"
+            r_msg = "[" + str(irange) + "-" + str(irange +
+                                                  self.scan_beam_num) + "]"
             print("-- [LasersScans] resized scans:", self.scans.shape, r_msg)
 
         if not self.clip_scans_at is None:
-            np.clip(self.scans, a_min=0, a_max=self.clip_scans_at, out=self.scans)
-            self.scans = self.scans / self.clip_scans_at    # normalization makes the vae work
+            np.clip(self.scans,
+                    a_min=0,
+                    a_max=self.clip_scans_at,
+                    out=self.scans)
+            self.scans = self.scans / self.clip_scans_at  # normalization makes the vae work
 
-    def init_rand(self, rand_scans_num, scan_dim, scan_res, scan_fov, clip_scans_at=5.0):
+    def init_rand(self,
+                  rand_scans_num,
+                  scan_dim,
+                  scan_res,
+                  scan_fov,
+                  clip_scans_at=5.0):
         self.scan_beam_num = scan_dim
         self.scan_res = scan_res
         self.scan_fov = scan_fov
@@ -112,13 +133,18 @@ class LaserScans:
         self.cmd_vel = np.zeros((rand_scans_num, 6))
         self.ts = np.zeros((rand_scans_num, 1))
 
-    def reshape_correlated_scans(self, cmdv, ts, correlated_steps, integration_steps,
-                                 theta_axis=5, normalize_factor=None):
+    def reshape_correlated_scans(self,
+                                 cmdv,
+                                 ts,
+                                 correlated_steps,
+                                 integration_steps,
+                                 theta_axis=5,
+                                 normalize_factor=None):
         assert cmdv.shape[0] >= correlated_steps + integration_steps \
             and cmdv.shape[0] == ts.shape[0]
 
         n_factor = correlated_steps + integration_steps
-        max_prev_row = int(cmdv.shape[0]/n_factor)*n_factor
+        max_prev_row = int(cmdv.shape[0] / n_factor) * n_factor
         cmdv = cmdv[:max_prev_row]
         ts = ts[:max_prev_row]
 
@@ -126,52 +152,64 @@ class LaserScans:
         prev_cmdv = cmdv[..., :correlated_steps, :]
         next_cmdv = cmdv[..., correlated_steps:, :]
 
-        prev_ts = 0.33*np.ones_like(prev_cmdv[..., :1])
+        prev_ts = 0.33 * np.ones_like(prev_cmdv[..., :1])
         correlated_cmdv = np.concatenate([prev_cmdv, prev_ts], axis=-1)
-        _, next_transform = self.compute_transforms(next_cmdv, theta_axis=theta_axis)
+        _, next_transform = self.compute_transforms(next_cmdv,
+                                                    theta_axis=theta_axis)
 
         if normalize_factor is not None:
             # translation normalization -> [-1.0, 1.0]
-            next_transform[:, :2] = np.clip(next_transform[:, :2], a_min=-normalize_factor,
-                                            a_max=normalize_factor)/normalize_factor
+            next_transform[:, :2] = np.clip(
+                next_transform[:, :2],
+                a_min=-normalize_factor,
+                a_max=normalize_factor) / normalize_factor
             # theta normalization -> [-1.0, 1.0]
             next_transform[:, 2] /= np.pi
 
         return correlated_cmdv, next_transform
 
     def compute_transform(self, cmdv, ts=None, theta_axis=5):
-        tstep = 0.033 if ts is None else max(0.033, min(0.0, np.mean(ts[:1] - ts[:-1])))
+        tstep = 0.033 if ts is None else max(
+            0.033, min(0.0, np.mean(ts[:1] - ts[:-1])))
 
         x, y, th = 0.0, 0.0, 0.0
         for n in range(cmdv.shape[0]):
-            rk_th = th + 0.5*cmdv[n, theta_axis]*tstep  # runge-kutta integration
-            x = x + cmdv[n, 0]*np.cos(rk_th)*tstep
-            y = y + cmdv[n, 0]*np.sin(rk_th)*tstep
-            th = th + cmdv[n, theta_axis]*tstep
+            rk_th = th + 0.5 * cmdv[
+                n, theta_axis] * tstep  # runge-kutta integration
+            x = x + cmdv[n, 0] * np.cos(rk_th) * tstep
+            y = y + cmdv[n, 0] * np.sin(rk_th) * tstep
+            th = th + cmdv[n, theta_axis] * tstep
 
         cth, sth = np.cos(th), np.sin(th)
-        homogenous_matrix = np.array(((cth, -sth, x), (sth, cth, y), (0, 0, 1)), dtype=np.float32)
+        homogenous_matrix = np.array(
+            ((cth, -sth, x), (sth, cth, y), (0, 0, 1)), dtype=np.float32)
         transform_params = np.array([x, y, th], dtype=np.float32)
         return homogenous_matrix, transform_params
 
     def compute_transforms(self, cmdv, ts=None, theta_axis=5):
-        transforms = [list(self.compute_transform(c, theta_axis=theta_axis)) for c in cmdv]
-        homogenous_matrix = np.array([t[0] for t in transforms], dtype=np.float32)
-        transform_params = np.array([t[1] for t in transforms], dtype=np.float32)
+        transforms = [
+            list(self.compute_transform(c, theta_axis=theta_axis))
+            for c in cmdv
+        ]
+        homogenous_matrix = np.array([t[0] for t in transforms],
+                                     dtype=np.float32)
+        transform_params = np.array([t[1] for t in transforms],
+                                    dtype=np.float32)
         return homogenous_matrix, transform_params
 
     def project_scan(self, scan, cmdv, ts):
         assert scan.shape[0] == self.scan_beam_num, "Wrong scan size."
 
         hm, _, _, _ = self.compute_transform(cmdv, ts)
-        theta = self.scan_res*np.arange(-0.5*self.scan_beam_num, 0.5*self.scan_beam_num)
+        theta = self.scan_res * np.arange(-0.5 * self.scan_beam_num,
+                                          0.5 * self.scan_beam_num)
         pts = np.ones((3, self.scan_beam_num))
-        pts[0] = scan*np.cos(theta)
-        pts[1] = scan*np.sin(theta)
+        pts[0] = scan * np.cos(theta)
+        pts[1] = scan * np.sin(theta)
         pts = np.matmul(hm, pts)
 
-        x2 = pts[0]*pts[0]
-        y2 = pts[1]*pts[1]
+        x2 = pts[0] * pts[0]
+        y2 = pts[1] * pts[1]
         return np.sqrt(x2 + y2)
 
     def project_scans(self, scans, cmdv, ts):
@@ -200,8 +238,8 @@ class LaserScans:
         if split_at <= 0:
             return self.scans
 
-        x_train = self.scans[:int(self.scans.shape[0]*split_at), :]
-        x_test = self.scans[int(self.scans.shape[0]*split_at):, :]
+        x_train = self.scans[:int(self.scans.shape[0] * split_at), :]
+        x_test = self.scans[int(self.scans.shape[0] * split_at):, :]
         if self.verbose:
             print("-- [LasersScans] scans train:", x_train.shape)
             print("-- [LasersScans] scans test:", x_test.shape)
@@ -233,23 +271,28 @@ class LaserScans:
         for spec in plot_scan_specs:
             assert spec[0].shape[0] == self.scan_beam_num, "Wrong scan size."
 
-        theta = self.scan_res*np.arange(-0.5*self.scan_beam_num, 0.5*self.scan_beam_num)
+        theta = self.scan_res * np.arange(-0.5 * self.scan_beam_num,
+                                          0.5 * self.scan_beam_num)
         theta = theta[::-1]
 
         plt.figure(figsize=(5, 5))
         plt.title(title)
 
         ax = plt.subplot(111, projection='polar')
-        ax.set_theta_offset(0.5*np.pi)
+        ax.set_theta_offset(0.5 * np.pi)
         ax.set_rlabel_position(-180)
 
         for spec in plot_scan_specs:
             scan, color, name = spec
-            for s, segment in enumerate(self.get_scan_segments(scan, 0.9)):
+            for s, segment in enumerate(self.get_scan_segments(scan, 4.9)):
                 if not segment[2]:
                     segment_slice = slice(segment[0], segment[1], None)
-                    plt.plot(theta[segment_slice], scan[segment_slice],
-                             'o', markersize=0.5, color=color, label=name if s == 0 else None)
+                    plt.plot(theta[segment_slice],
+                             scan[segment_slice],
+                             'o',
+                             markersize=0.5,
+                             color=color,
+                             label=name if s == 0 else None)
         plt.legend()
 
         if len(fig_path) > 0:
@@ -257,10 +300,15 @@ class LaserScans:
 
     def plot_projections(self, scan, params, param_names=[], fig_path=""):
         assert scan.shape[0] == self.scan_beam_num, "Wrong scan size."
-        assert len(param_names) == 0 or len(params) == len(param_names), "param_names must have same length of params."
+        assert len(param_names) == 0 or len(params) == len(
+            param_names), "param_names must have same length of params."
 
-        theta = self.scan_res*np.arange(-0.5*self.scan_beam_num, 0.5*self.scan_beam_num)
-        pts = np.vstack([scan*np.cos(theta), scan*np.sin(theta), np.ones((self.scan_beam_num))])
+        theta = self.scan_res * np.arange(-0.5 * self.scan_beam_num,
+                                          0.5 * self.scan_beam_num)
+        pts = np.vstack([
+            scan * np.cos(theta), scan * np.sin(theta),
+            np.ones((self.scan_beam_num))
+        ])
 
         plt.figure()
         plt.axis('equal')
@@ -271,7 +319,9 @@ class LaserScans:
             cth, sth = np.cos(th), np.sin(th)
             hm = np.array(((cth, -sth, x), (sth, cth, y), (0, 0, 1)))
             t_pts = np.matmul(hm, pts)
-            plt.plot(t_pts[1], t_pts[0], label=param_names[p] if param_names else str(p))
+            plt.plot(t_pts[1],
+                     t_pts[0],
+                     label=param_names[p] if param_names else str(p))
 
         plt.legend()
 
@@ -280,8 +330,13 @@ class LaserScans:
 
 
 class TfPredictor:
-    def __init__(self, correlated_steps, input_dim, output_dim,
-                 model_id="dense", batch_size=32, verbose=False):
+    def __init__(self,
+                 correlated_steps,
+                 input_dim,
+                 output_dim,
+                 model_id="dense",
+                 batch_size=32,
+                 verbose=False):
         self.verbose = verbose
         self.correlated_steps = correlated_steps
         self.input_dim = input_dim
@@ -292,12 +347,15 @@ class TfPredictor:
 
     def lstm(self):
         dropout = 0.4
-        depth = 64+64
+        depth = 64 + 64
 
         model = Sequential()
-        model.add(LSTM(depth, input_shape=(self.correlated_steps, self.input_dim),
-                          return_sequences=True, activation='tanh',
-                          recurrent_activation='hard_sigmoid'))
+        model.add(
+            LSTM(depth,
+                 input_shape=(self.correlated_steps, self.input_dim),
+                 return_sequences=True,
+                 activation='tanh',
+                 recurrent_activation='hard_sigmoid'))
         model.add(Dense(depth))
         model.add(LeakyReLU(alpha=0.2))
         model.add(Flatten())
@@ -313,9 +371,13 @@ class TfPredictor:
         depth = 16
 
         model = Sequential()
-        model.add(Conv1D(int(depth/4), 4, padding='same', input_shape=(self.correlated_steps, self.input_dim)))
+        model.add(
+            Conv1D(int(depth / 4),
+                   4,
+                   padding='same',
+                   input_shape=(self.correlated_steps, self.input_dim)))
         model.add(LeakyReLU(alpha=0.2))
-        model.add(Conv1D(int(depth/8), 4, padding='same'))
+        model.add(Conv1D(int(depth / 8), 4, padding='same'))
         model.add(LeakyReLU(alpha=0.2))
         model.add(Flatten())
         model.add(Dense(self.output_dim, use_bias=True))
@@ -337,7 +399,9 @@ class TfPredictor:
 
             # optimizer = Adam(lr=lr, beta_1=0.5, decay=3e-8)
             optimizer = SGD(lr=lr)
-            self.model.compile(optimizer=optimizer, loss='mean_squared_error', metrics=['accuracy'])
+            self.model.compile(optimizer=optimizer,
+                               loss='mean_squared_error',
+                               metrics=['accuracy'])
 
         return self.model
 
@@ -345,51 +409,182 @@ class TfPredictor:
         ret = []
         for e in range(epochs):
             for i in range(0, x.shape[0], self.batch_size):
-                met = self.model.train_on_batch(x[i:i + self.batch_size], tfp_transform[i:i + self.batch_size])
+                met = self.model.train_on_batch(
+                    x[i:i + self.batch_size],
+                    tfp_transform[i:i + self.batch_size])
                 ret.append(met)
 
-        return np.mean(np.zeros((2,)) if len(ret) == 0 else np.array(ret), axis=0)
+        return np.mean(np.zeros((2, )) if len(ret) == 0 else np.array(ret),
+                       axis=0)
 
     def predict(self, x):
         return self.model.predict(x)
 
 
+class Landmarks:
+    def __init__(self, verbose=False):
+        self.verbose = verbose
+        self.ts = None
+        self.pos = None
+        self.landmarks = None
+        self.orig_landmarks = None
+        self.max_rock_radius = 0
+        self.max_crater_radius = 0
+        self.max_pos = [10.0, 10.0]
+        self.max_landmarks = 0
+        self.num_features = 2
+
+    def load(self, datafile, max_landmarks=None):
+        self.metadata = np.loadtxt(datafile, max_rows=1).astype('float32')
+        self.data = np.loadtxt(datafile, skiprows=1).astype('float32')
+        self.max_rock_radius = self.metadata[1]
+        self.max_crater_radius = self.metadata[2]
+        self.ts = self.data[:, :1]
+        self.pos = self.data[:, 1:3]
+        self.landmarks = self.data[:, 3:]
+
+        if self.verbose:
+            print("-- [Landmarks] timesteps:", self.ts.shape)
+            print("-- [Landmarks] pos:", self.pos.shape)
+            print("-- [Landmarks] landmarks:", self.landmarks.shape)
+
+        if max_landmarks is not None and max_landmarks < (
+                self.landmarks.shape[1] / 4):
+            self.landmarks = self.landmarks[:, :max_landmarks * 4]
+            if self.verbose:
+                print("-- [Landmarks] resized landmarks:",
+                      self.landmarks.shape)
+
+        self.max_landmarks = self.landmarks.shape[1] / 4
+
+        # Normalize radius for VAE
+        for i in range(0, self.landmarks.shape[0]):
+            for j in range(0, self.landmarks.shape[1], 4):
+                if self.landmarks[i][j + 3] == 1:
+                    self.landmarks[i][j + 2] /= self.max_rock_radius
+                elif self.landmarks[i][j + 3] == 2:
+                    self.landmarks[i][j + 2] /= self.max_crater_radius
+                if (self.landmarks[i][j] > 10.0 or self.landmarks[i][j + 1] > 10.0) or (self.landmarks[i][j] < -10.0 or self.landmarks[i][j + 1] < -10.0):
+                    self.landmarks[i][j] = 0.0
+                    self.landmarks[i][j + 1] = 0.0
+                    self.landmarks[i][j + 3] = 0.0
+                    continue
+                self.landmarks[i][j] /= (1 * self.max_pos[0])
+                self.landmarks[i][j + 1] /= (1 * self.max_pos[1]
+                                             )  # Hardcoded normalization
+
+        # Remove type number from landmarks
+        if self.num_features < 4:
+            self.landmarks = np.delete(self.landmarks,
+                                       list(
+                                           range(3, self.landmarks.shape[1],
+                                                 4)),
+                                       axis=1)
+        if self.num_features < 3:
+            self.landmarks = np.delete(self.landmarks,
+                                       list(
+                                           range(2, self.landmarks.shape[1],
+                                                 3)),
+                                       axis=1)
+
+
+    def landmarks_dim(self):
+        return -1 if self.landmarks is None else self.landmarks.shape[1]
+
+    def plot(self, plot_specs, title='', fig_path=""):
+        assert len(plot_specs) > 0, 'Empty input.'
+        for spec in plot_specs:
+            assert spec[0].shape[
+                0] == self.max_landmarks * self.num_features, "Wrong landmarks size."
+
+        fig, ax = plt.subplots()
+        plt.axis('square')
+        plt.axis([
+            -self.max_pos[0], self.max_pos[0], -self.max_pos[1],
+            self.max_pos[1]
+        ])
+
+        for spec in plot_specs:
+            landmarks, color, name = spec
+            # print(landmarks.shape)
+            # print("----")
+            for i in range(0, landmarks.shape[0], 3):
+                patch = Circle(
+                    (landmarks[i] * 1 * self.max_pos[0],
+                     landmarks[i + 1] * 1 * self.max_pos[1]),
+                    landmarks[i + 2] * self.max_rock_radius if self.num_features > 2 else 0.25,
+                    color=color,
+                    alpha=0.4)
+                ax.add_patch(patch)
+        plt.legend(handles=[
+            Patch(color=color, label=name) for _, color, name in plot_specs
+        ])
+
+        plt.xlabel("meters")
+        plt.ylabel("meters")
+
+        # plt.show()
+        if len(fig_path) > 0:
+            plt.savefig(fig_path, format='pdf')
+
+
 if __name__ == "__main__":
+    cwd = os.path.dirname(os.path.abspath(__file__))
+    dataset_file = os.path.join(os.path.join(cwd, "../../dataset/"),
+                                "landmarks.txt")
+    lms = Landmarks(verbose=True)
+    lms.load(dataset_file)
+
+if __name__ == "__main2__":
     scan_n = 8000
     correlated_steps = 8
     batch_sz = 64
     integration_step = 10
 
     max_vel = 0.45
-    max_dist = 0.33*integration_step*max_vel
+    max_dist = 0.33 * integration_step * max_vel
     learning_rate = 0.002
 
     # diag_first_floor.txt ; diag_underground.txt ; diag_labrococo.txt
     cwd = os.path.dirname(os.path.abspath(__file__))
-    dataset_file = os.path.join(os.path.join(cwd, "../../dataset/"), "diag_underground.txt")
+    dataset_file = os.path.join(os.path.join(cwd, "../../dataset/"),
+                                "diag_underground.txt")
 
     ls = LaserScans(verbose=True)
-    ls.load(dataset_file, scan_res=0.00653590704, scan_fov=(3/2)*np.pi, scan_beam_num=512,
-            clip_scans_at=8, scan_offset=8)
+    ls.load(dataset_file,
+            scan_res=0.00653590704,
+            scan_fov=(3 / 2) * np.pi,
+            scan_beam_num=512,
+            clip_scans_at=8,
+            scan_offset=8)
     scans = ls.get_scans()[:scan_n]
     cmdvs = ls.get_cmd_vel()[:scan_n, ::5]
     timesteps = ls.timesteps()[:scan_n]
 
-    correlated_cmdv, target_transform = ls.reshape_correlated_scans(cmdvs, timesteps,
-                                                                    correlated_steps, integration_step,
-                                                                    normalize_factor=max_dist, theta_axis=1)
+    correlated_cmdv, target_transform = ls.reshape_correlated_scans(
+        cmdvs,
+        timesteps,
+        correlated_steps,
+        integration_step,
+        normalize_factor=max_dist,
+        theta_axis=1)
 
-    tfp = TfPredictor(correlated_steps=correlated_steps, input_dim=correlated_cmdv.shape[-1],
-                      output_dim=3, batch_size=batch_sz, verbose=True)
+    tfp = TfPredictor(correlated_steps=correlated_steps,
+                      input_dim=correlated_cmdv.shape[-1],
+                      output_dim=3,
+                      batch_size=batch_sz,
+                      verbose=True)
     tfp.build_model(lr=learning_rate)
 
     tfp_transform = tfp.predict(correlated_cmdv)
-    tfp_transform[:, :2] = tfp_transform[:, :2]*max_dist
-    tfp_transform[:, 2] = tfp_transform[:, 2]*np.pi
+    tfp_transform[:, :2] = tfp_transform[:, :2] * max_dist
+    tfp_transform[:, 2] = tfp_transform[:, 2] * np.pi
 
     rnd_idx = int(np.random.rand() * tfp_transform.shape[0])
-    ls.plot_projections(scans[rnd_idx], params=[target_transform[rnd_idx], tfp_transform[rnd_idx]],
-                        param_names=['projected', 'predicted'])
+    ls.plot_projections(
+        scans[rnd_idx],
+        params=[target_transform[rnd_idx], tfp_transform[rnd_idx]],
+        param_names=['projected', 'predicted'])
 
     ms = MetricsSaver(save_path="/tmp/")
 
@@ -400,10 +595,12 @@ if __name__ == "__main__":
         ms.add('projector', metrics)
 
     tfp_transform = tfp.predict(correlated_cmdv)
-    tfp_transform[:, :2] = tfp_transform[:, :2]*max_dist
-    tfp_transform[:, 2] = tfp_transform[:, 2]*np.pi
+    tfp_transform[:, :2] = tfp_transform[:, :2] * max_dist
+    tfp_transform[:, 2] = tfp_transform[:, 2] * np.pi
 
-    ls.plot_projections(scans[rnd_idx], params=[target_transform[rnd_idx], tfp_transform[rnd_idx]],
-                        param_names=['projected', 'predicted'])
+    ls.plot_projections(
+        scans[rnd_idx],
+        params=[target_transform[rnd_idx], tfp_transform[rnd_idx]],
+        param_names=['projected', 'predicted'])
     ms.save()
     plt.show()
