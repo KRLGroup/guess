@@ -31,7 +31,7 @@ struct Config{
   float range_min;
   Config() {
     cmd_vel_topic = "/cmd_vel";
-    scan_topic    = "/scan";
+    scan_topic    = "/scan_simulated_throttle";
     dataset_name  = "output_data.txt";
     range_min     = 0.1;
   }

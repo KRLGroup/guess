@@ -18,7 +18,7 @@ class ScanGuesserNode:
         scan_topic = rospy.get_param('~scan_topic', '/scan')
         sg_scan_topic = rospy.get_param('~sg_scan_topic', '/sg_scan')
         sv_scan_topic = rospy.get_param('~sv_scan_topic', '/sv_scan')
-        self.base_tf = rospy.get_param('~base_tf', 'base_laser_link')
+        self.base_tf = rospy.get_param('~base_tf', 'base_laser')
         self.gtf_name = rospy.get_param('~gtf_name', 'gen_tf')
         self.scan_sz = int(rospy.get_param('~scan_sz', '512'))
         self.scan_batch_sz = int(rospy.get_param('~scan_batch_sz', '8'))
@@ -84,6 +84,7 @@ class ScanGuesserNode:
         if self.buffer_idx == self.scan_batch_sz:
             self.buffer_idx = 0
         else:
+            data.ranges = [data.range_max if np.isinf(x) else x for x in data.ranges]
             pkg = self.__reshapeData(data.ranges)
             try: self.provider.send(pkg)
             except Exception as e:

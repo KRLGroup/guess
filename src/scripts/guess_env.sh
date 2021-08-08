@@ -11,16 +11,14 @@ if [ "$1" == "-h" ] || [ "$1" == "-help" ]; then
 fi
 
 if [ $# -lt 1 ]; then
-    map_name=simple_corridor
+    map_name=diag_floor_b1
 else
     map_name=$1
 fi
 
-GUESS_ROOT=/home/sapienzbot/ws/guess
+GUESS_ROOT=/home/shrijitsingh99/guess
 rcfg=${GUESS_ROOT}/config/rviz/stage_guess.config.rviz
-map_file=${GUESS_ROOT}/config/world/${map_name}
-# urdf_file=${GUESS_ROOT}/config/ros/urdf/
 cmd_vel_topic=/cmd_vel
-
+eval "source ~/guess/devel/setup.bash"
 echo -e "Launching Guess-stage environment"
-xterm -hold -e "roslaunch scan_guesser_node guess_stage_env.launch worldfile:=${map_file}.world mapfile:=${map_file}.yaml urdffile:=${urdffile} cmd_vel_topic:=${cmd_vel_topic} rviz_cfg:=${rcfg}" &
+eval "roslaunch scan_guesser_node guess_stage_env.launch worldfile:=${map_file} map_name:=${map_name} cmd_vel_topic:=${cmd_vel_topic} rviz_cfg:=${rcfg}" 

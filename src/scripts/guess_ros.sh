@@ -44,7 +44,7 @@ wait_sec() {
 
 # defaults
 spin_guesser=1
-map_name=simple_corridor
+map_name=diag_floor_b1
 
 if [ $# -gt 0 ]; then
     map_name=$1
@@ -53,17 +53,15 @@ if [ $# -gt 1 ]; then
     spin_guesser=$2
 fi
 
-GUESS_ROOT=/home/sapienzbot/ws/guess
+GUESS_ROOT=/home/shrijitsingh99/guess
 pyscript=${GUESS_ROOT}/src/py/scan_guesser_socket.py
 cmd_vel_topic=/cmd_vel
 
-wait_sec 1 "Launching Guess-stage topological-navigation"
-xterm -hold -e "rosrun scan_guesser_node topological_nav _map_name:=${map_name}" &
 
 if [ ${spin_guesser} -eq 1 ]; then
     wait_sec 3 "Launching Guess-ros-node"
     xterm -hold -e "rosrun scan_guesser_node guesser _cmd_vel_topic:=${cmd_vel_topic}" &
 
-    export PYTHONPATH="/usr/local/:${GUESS_ROOT}/src/py/:/usr/lib/python3/dist-packages/"
-    python3 ${pyscript}
+    # export PYTHONPATH="/usr/local/:${GUESS_ROOT}/src/py/:/usr/lib/python3/dist-packages/"
+    python3.8 ${pyscript}
 fi

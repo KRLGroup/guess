@@ -1,0 +1,80 @@
+<launch>
+    <arg name="map_file" default="$(find guess_simulation)/maps/lunar_terrain.yaml"/>
+    <arg name="worldfile" default="lunar"/>
+    <arg name="rviz_cfg" default="/home/shrijitsingh99/guess/config/rviz/rover.config.rviz"/>
+    <!-- <arg name="initial_pose_x" default="0.0"/>
+    <arg name="initial_pose_y" default="0.0"/>
+    <arg name="initial_pose_z" default="9.0"/>
+    <arg name="initial_pose_yaw" default="1.57"/> -->
+    <arg name="initial_pose_x" default="0.0"/>
+    <arg name="initial_pose_y" default="0.0"/>
+    <arg name="initial_pose_z" default="9.0"/>
+    <arg name="initial_pose_yaw" default="1.57"/>
+
+    <arg name="odom_frame_id" default="odom"/>
+    <!-- Unused -->
+    <arg name="global_frame_id" default="map"/>
+    <arg name="scan_topic" default="scan"/>
+    <arg name="cmd_vel_topic" default="cmd_vel"/>
+    <!-- Unused -->
+
+    <param name="/use_sim_time" value="true"/>
+
+    <!-- Simulation -->
+    <include file="$(find gazebo_ros)/launch/empty_world.launch">
+        <arg name="world_name" value="$(find guess_simulation)/worlds/$(arg worldfile).world"/>
+        <arg name="paused" value="false"/>
+        <arg name="use_sim_time" value="true"/>
+        <arg name="gui" value="true"/>
+        <arg name="debug" value="false"/>
+        <arg name="verbose" value="true" />
+    </include>
+
+    <include file="$(find husky_gazebo)/launch/spawn_husky.launch">
+        <arg name="x" value="$(arg initial_pose_x)"/>
+        <arg name="y" value="$(arg initial_pose_y)"/>
+        <arg name="z" value="$(arg initial_pose_z)"/>
+        <arg name="yaw" value="$(arg initial_pose_yaw)"/>
+        <arg name="urdf_extras" value="$(find guess_simulation)/urdf/husky/sensors.urdf.xacro"/>
+        <!-- <arg name="robot_namespace" value="rover" /> -->
+    </include>
+
+    <!-- Map Server -->
+    <node name="map_server" pkg="map_server" type="map_server" args="$(arg map_file)" />
+
+    <!-- Visualization -->
+    <node name="rviz" pkg="rviz" type="rviz" args="-d $(arg rviz_cfg)"/>
+
+    <!-- Navigation -->
+    <arg name="no_static_map" default="false"/>
+    <arg name="base_global_planner" default="navfn/NavfnROS"/>
+    <arg name="base_local_planner" default="dwa_local_planner/DWAPlannerROS"/>
+
+    <node pkg="move_base" type="move_base" respawn="false" name="move_base" output="screen">
+
+        <param name="base_global_planner" value="$(arg base_global_planner)"/>
+        <param name="base_local_planner" value="$(arg base_local_planner)"/>
+        <rosparam file="$(find scan_guesser_node)/config/planner.yaml" command="load"/>
+
+        <!-- observation sources located in costmap_common.yaml -->
+        <rosparam file="$(find scan_guesser_node)/config/costmap_common.yaml" command="load" ns="global_costmap" />
+        <rosparam file="$(find scan_guesser_node)/config/costmap_common.yaml" command="load" ns="local_costmap" />
+
+        <!-- local costmap, needs size -->
+        <rosparam file="$(find scan_guesser_node)/config/costmap_local.yaml" command="load" ns="local_costmap" />
+        <param name="local_costmap/width" value="10.0"/>
+        <param name="local_costmap/height" value="10.0"/>
+
+        <!-- static global costmap, static map provides size -->
+        <rosparam file="$(find scan_guesser_node)/config/costmap_global_static.yaml" command="load" ns="global_costmap" unless="$(arg no_static_map)"/>
+
+        <!-- global costmap with laser, for odom_navigation_demo -->
+        <rosparam file="$(find scan_guesser_node)/config/costmap_global_laser.yaml" command="load" ns="global_costmap" if="$(arg no_static_map)"/>
+        <param name="global_costmap/width" value="100.0" if="$(arg no_static_map)"/>
+        <param name="global_costmap/height" value="100.0" if="$(arg no_static_map)"/>
+    </node>
+
+    <node pkg="tf" type="static_transform_publisher" name="map_to_odom" args="0 0 0 0 0 0 map odom 100" />
+    <node pkg="scan_guesser_node" type="odom_msg_tf.py" name="odom_msg_tf" />
+
+</launch>
